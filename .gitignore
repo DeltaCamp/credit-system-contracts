@@ -1,0 +1,14 @@
+node_modules*
+.ganache
+build
+networks/*
+.DS_Store
+yarn-error.log
+.envrc
+zos.dev*.json
+.zos.session
+.zos.lock
+.openzeppelin/.session
+.openzeppelin/dev*
+coverage
+coverage.json
