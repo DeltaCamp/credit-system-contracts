@@ -10,16 +10,16 @@ import "./MemberManager.sol";
 contract CreditSystem is Initializable {
   using SafeMath for uint256;
 
-  event Charged(address indexed from, address indexed to, uint256 amount, bytes32 txId);
+  event Charged(address indexed from, address indexed to, uint256 amount, uint256 nonce);
 
   IERC20 public token;
   MemberManager public memberManager;
   uint256 unstakeDelay;
   mapping(address => uint256) public stakes;
   mapping(address => uint256) public unstakedAt;
-  mapping(bytes32 => bool) transactionUsed;
   mapping(address => uint256) creditScores;
   mapping(address => bool) existingUsers;
+  mapping(address => mapping(address => uint256)) nonces;
 
   function initialize (
     address _token,
@@ -56,6 +56,9 @@ contract CreditSystem is Initializable {
   }
 
   function stakeCanBeWithdrawn(address _addr) public view returns (bool) {
+    if (unstakedAt[_addr] == 0) {
+      return false;
+    }
     return unstakedAt[_addr] + unstakeDelay <= block.number;
   }
 
@@ -64,8 +67,8 @@ contract CreditSystem is Initializable {
       address from,
       address to,
       uint amount,
-      bytes32 txId
-    ) = abi.decode(data, (address, address, uint, bytes32));
+      uint nonce
+    ) = abi.decode(data, (address, address, uint, uint));
 
     (
       uint8 v,
@@ -75,7 +78,7 @@ contract CreditSystem is Initializable {
 
     bool signatoryValid = recover(keccak256(data), v, r, s) == from;
     bool sufficientFunds = availableBalanceOf(from) > amount;
-    bool transactionNew = !transactionUsed[txId];
+    bool transactionNew = nonces[from][to] < nonce;
 
     return signatoryValid && sufficientFunds && transactionNew;
   }
@@ -85,12 +88,14 @@ contract CreditSystem is Initializable {
       address from,
       address to,
       uint amount,
-      bytes32 txId
-    ) = abi.decode(data, (address, address, uint, bytes32));
+      uint256 nonce
+    ) = abi.decode(data, (address, address, uint, uint256));
 
+    require(msg.sender == to, "only the recipient can submit a charge");
     require(recover(keccak256(data), v, r, s) == from, "signature of signer is invalid");
-    require(!transactionUsed[txId], "transaction has already been used");
-    transactionUsed[txId] = true;
+    require(nonce > nonces[from][to], "nonce must have increased");
+
+    nonces[from][to] = nonce;
 
     uint256 availableBalance = availableBalanceOf(from);
     uint256 remainder;
@@ -98,7 +103,10 @@ contract CreditSystem is Initializable {
       remainder = amount.sub(availableBalance);
     }
 
-    require(token.transferFrom(from, to, amount.sub(remainder)), "could not transfer from sender");
+    uint transferAmount = amount.sub(remainder);
+    if (transferAmount > 0) {
+      require(token.transferFrom(from, to, transferAmount), "could not transfer from sender");
+    }
 
     if (remainder > 0) {
       // demerit their credit score
@@ -115,25 +123,44 @@ contract CreditSystem is Initializable {
       // boost their credit score
     }
 
-    emit Charged(from, to, amount, txId);
+    emit Charged(from, to, amount, nonce);
   }
 
-  function calculateCreditInfraction(uint256 _credit, uint256 _stake, uint256 _remainder) public pure returns (uint256) {
-    // max infraction is 20% of their credit score.
-    int256 remainderFixed = FixidityLib.newFixed(int256(_remainder));
-    int256 stakeFixed = FixidityLib.newFixed(int256(_stake));
-    int256 fractionFixed = FixidityLib.divide(remainderFixed, stakeFixed);
+  function calculateCreditInfraction(uint256 _credit, uint256 _overdraft, uint256 _overage) public pure returns (uint256) {
+    /*
 
-    // 0.8 + 0.2 ( fraction )
-    int256 creditFractionFixed = FixidityLib.add(
-      FixidityLib.newFixed(8, uint8(1)),
-      FixidityLib.multiply(
-        FixidityLib.newFixed(2, uint8(1)),
-        fractionFixed
+      Slash fraction = 1 - ((3 * overage) / (overdraft + credit))
+
+    */
+
+    uint256 denominator = _overdraft.add(_credit);
+    uint256 weightedOverage = _overage.mul(3);
+
+    int256 creditFractionFixed = 0;
+
+    int256 fixed1 = FixidityLib.newFixed(1);
+
+    if (denominator == 0) {
+      creditFractionFixed = fixed1;
+    } else if (weightedOverage > 0) {
+      creditFractionFixed = FixidityLib.newFixedFraction(
+        int256(weightedOverage),
+        int256(denominator)
+      );
+    }
+
+    if (creditFractionFixed > fixed1) {
+      creditFractionFixed = fixed1;
+    }
+
+    return uint256(
+      FixidityLib.fromFixed(
+        FixidityLib.multiply(
+          FixidityLib.subtract(FixidityLib.newFixed(1), creditFractionFixed),
+          FixidityLib.newFixed(int256(_credit))
+        )
       )
     );
-
-    return uint256(FixidityLib.fromFixed(FixidityLib.multiply(creditFractionFixed, FixidityLib.newFixed(int256(_credit)))));
   }
 
   function availableBalanceOf(address _addr) public view returns (uint256) {

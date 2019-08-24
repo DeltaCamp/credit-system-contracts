@@ -6,7 +6,7 @@
   "repository": "git@github.com:DeltaCamp/credit-system.git",
   "author": "Brendan Asselstine brendan@delta.camp",
   "scripts": {
-    "test": "truffle test --migrations_directory ./migrations/empty",
+    "test": "truffle test --migrations_directory ./migrations/empty --network local",
     "coverage": "solidity-coverage",
     "compile": "truffle compile",
     "compile-and-merge": "yarn compile && zos-truffle-merge -n 1 zos.mainnet.json && zos-truffle-merge -n 4 zos.rinkeby.json",
