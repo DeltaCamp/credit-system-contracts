@@ -10,7 +10,7 @@ import "./MemberManager.sol";
 contract CreditSystem is Initializable {
   using SafeMath for uint256;
 
-  event Charged(address indexed from, address indexed to, uint256 amount, uint256 nonce);
+  event Charged(address indexed from, address indexed to, uint256 amount, bytes32 txId);
 
   IERC20 public token;
   MemberManager public memberManager;
@@ -19,7 +19,7 @@ contract CreditSystem is Initializable {
   mapping(address => uint256) public unstakedAt;
   mapping(address => uint256) creditScores;
   mapping(address => bool) existingUsers;
-  mapping(address => mapping(address => uint256)) nonces;
+  mapping(address => mapping(address => mapping(bytes32 => bool))) txSent;
 
   function initialize (
     address _token,
@@ -67,8 +67,8 @@ contract CreditSystem is Initializable {
       address from,
       address to,
       uint amount,
-      uint nonce
-    ) = abi.decode(data, (address, address, uint, uint));
+      bytes32 txId
+    ) = abi.decode(data, (address, address, uint, bytes32));
 
     (
       uint8 v,
@@ -78,7 +78,7 @@ contract CreditSystem is Initializable {
 
     bool signatoryValid = recover(keccak256(data), v, r, s) == from;
     bool sufficientFunds = availableBalanceOf(from) > amount;
-    bool transactionNew = nonces[from][to] < nonce;
+    bool transactionNew = !txSent[from][to][txId];
 
     return signatoryValid && sufficientFunds && transactionNew;
   }
@@ -88,14 +88,14 @@ contract CreditSystem is Initializable {
       address from,
       address to,
       uint amount,
-      uint256 nonce
-    ) = abi.decode(data, (address, address, uint, uint256));
+      bytes32 txId
+    ) = abi.decode(data, (address, address, uint, bytes32));
 
     require(msg.sender == to, "only the recipient can submit a charge");
     require(recover(keccak256(data), v, r, s) == from, "signature of signer is invalid");
-    require(nonce > nonces[from][to], "nonce must have increased");
+    require(!txSent[from][to][txId], "nonce must have increased");
 
-    nonces[from][to] = nonce;
+    txSent[from][to][txId] = true;
 
     uint256 availableBalance = availableBalanceOf(from);
     uint256 remainder;
@@ -123,7 +123,7 @@ contract CreditSystem is Initializable {
       // boost their credit score
     }
 
-    emit Charged(from, to, amount, nonce);
+    emit Charged(from, to, amount, txId);
   }
 
   function calculateCreditInfraction(uint256 _credit, uint256 _overdraft, uint256 _overage) public pure returns (uint256) {

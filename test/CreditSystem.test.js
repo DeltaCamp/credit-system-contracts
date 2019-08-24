@@ -8,8 +8,6 @@ const ethers = require('ethers')
 const toWei = require('./helpers/toWei')
 const mineBlocks = require('./helpers/mineBlocks')
 
-let n = 1
-
 contract('CreditSystem', (accounts) => {
 
   let creditSystem;
@@ -69,10 +67,10 @@ contract('CreditSystem', (accounts) => {
   }
 
   function encodeCharge({
-    from, to, amount, nonce
+    from, to, amount, txId
   }) {
-    if (!nonce) {
-      nonce = n++
+    if (!txId) {
+      txId = ethers.utils.randomBytes(32)
     }
 
     return ethers.utils.defaultAbiCoder.encode(
@@ -80,13 +78,13 @@ contract('CreditSystem', (accounts) => {
         'address',
         'address',
         'uint',
-        'uint'
+        'bytes32'
       ],
       [
         from,
         to,
         amount,
-        nonce
+        txId
       ]
     )
   }
